@@ -9,6 +9,7 @@ import xgboost as xgb
 from utils.pandas_utils import group_categoricals_tail
 import utils.pimpmatplotlib as pm
 from utils.xgbextras import stopping_at
+from sklearn.metrics import roc_auc_score
 
 # Config
 CONFIG_FOLDER = os.path.join("config")
@@ -47,10 +48,10 @@ if __name__ == "__main__":
 
     # Load config
     source_config = os.path.join(CONFIG_FOLDER, CONFIG_FILE)
-    features = pd.read_csv(source_config,
-                        sep=";", decimal=".", encoding="latin1",
-                        keep_default_na = False, na_values = [""])
+    features = pd.read_csv(source_config, keep_default_na=False, na_values=[""])
+    print(features.columns)
     index = features.loc[features[MODEL_TYPE] == "index", "column"].tolist()
+    print(index)
     predictors = features.loc[features[MODEL_TYPE] == "predictor", "column"].tolist()
     labels = features.loc[features[MODEL_TYPE] == "label", "column"].tolist()
     categorical = features.loc[(features["categorical"] == 1) & (features["column"].isin(predictors)), "column"].tolist()
@@ -100,6 +101,8 @@ if __name__ == "__main__":
         predictions[pred_label] = bst.predict(d["test"])
         
         print("Logloss: {}".format(log_loss(d["test"].get_label(), predictions[pred_label])), end="\n\n")
+        auc_score = roc_auc_score(d["test"].get_label(), predictions[pred_label])
+        print(f"AUC {label}: {auc_score:.4f}")
         
         if TAG:
             title = "_".join([TAG, label])
