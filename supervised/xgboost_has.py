@@ -9,7 +9,16 @@ import xgboost as xgb
 from utils.pandas_utils import group_categoricals_tail
 import utils.pimpmatplotlib as pm
 from utils.xgbextras import stopping_at
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    average_precision_score,
+    fbeta_score
+)
+from xgboost.callback import EarlyStopping
+
 
 # Config
 CONFIG_FOLDER = os.path.join("config")
@@ -79,6 +88,8 @@ if __name__ == "__main__":
         d[set_name] = xgb.DMatrix(data.loc[set_indexes, xgb_features])
 
     predictions = {}
+
+    print(labels)
     for label in labels:
         print("----------------------------", end="\n")
         print(label, end="\n")
@@ -92,8 +103,8 @@ if __name__ == "__main__":
         print("Training XGB...")
         bst = xgb.train(params=XGB_PARAMS, 
                         num_boost_round=3000, 
-                        dtrain=d["train"], evals=[(d["valid"], "val")], 
-                        callbacks=[stopping_at(5*10**(-4))])
+                        dtrain=d["train"], evals=[(d["valid"], "val")],
+                        callbacks=[EarlyStopping(rounds=10)])
         print("Done!", end="\n\n")
 
         print("Predictions and plots XGB...")
@@ -101,8 +112,22 @@ if __name__ == "__main__":
         predictions[pred_label] = bst.predict(d["test"])
         
         print("Logloss: {}".format(log_loss(d["test"].get_label(), predictions[pred_label])), end="\n\n")
+
+        threshold_preds = (predictions[pred_label] > 0.5).astype(int)
+        
         auc_score = roc_auc_score(d["test"].get_label(), predictions[pred_label])
+        accuracy = accuracy_score(d["test"].get_label(), threshold_preds)
+        precision = precision_score(d["test"].get_label(), threshold_preds)
+        recall = recall_score(d["test"].get_label(), threshold_preds)
+        pr_auc = average_precision_score(d["test"].get_label(), predictions[pred_label])
+        f2_score = fbeta_score(d["test"].get_label(), threshold_preds, beta=2)
+        
         print(f"AUC {label}: {auc_score:.4f}")
+        print(f"Accuracy {label}: {accuracy:.4f}")
+        print(f"Precision {label}: {precision:.4f}")
+        print(f"Recall {label}: {recall:.4f}")
+        print(f"PR_AUC {label}: {pr_auc:.4f}")
+        print(f"F2-Score {label}: {f2_score:.4f}")
         
         if TAG:
             title = "_".join([TAG, label])

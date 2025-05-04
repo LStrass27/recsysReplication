@@ -48,9 +48,7 @@ if __name__ == "__main__":
 
     # Load config
     source_config = os.path.join(CONFIG_FOLDER, CONFIG_FILE)
-    features = pd.read_csv(source_config,
-                        sep=";", decimal=".", encoding="latin1",
-                        keep_default_na = False, na_values = [""])
+    features = pd.read_csv(source_config, keep_default_na=False, na_values=[""])
     index = features.loc[features[MODEL_TYPE] == "index", "column"].tolist()
     predictors = features.loc[features[MODEL_TYPE] == "predictor", "column"].tolist()
     labels = features.loc[features[MODEL_TYPE] == "label", "column"].tolist()
@@ -118,6 +116,24 @@ if __name__ == "__main__":
         predictions[pred_label] = bst.predict(d["test"])
         
         print("Logloss: {}".format(log_loss(y_test, predictions[pred_label])), end="\n\n")
+
+        print(predictions[pred_label])
+
+        threshold_preds = 0
+
+        auc_score = roc_auc_score(y_test, predictions[pred_label])
+        accuracy = accuracy_score(d["test"].get_label(), threshold_preds)
+        precision = precision_score(d["test"].get_label(), threshold_preds)
+        recall = recall_score(d["test"].get_label(), threshold_preds)
+        pr_auc = average_precision_score(d["test"].get_label(), predictions[pred_label])
+        f2_score = fbeta_score(d["test"].get_label(), threshold_preds, beta=2)
+        
+        print(f"AUC {label}: {auc_score:.4f}")
+        print(f"Accuracy {label}: {accuracy:.4f}")
+        print(f"Precision {label}: {precision:.4f}")
+        print(f"Recall {label}: {recall:.4f}")
+        print(f"PR_AUC {label}: {pr_auc:.4f}")
+        print(f"F2-Score {label}: {f2_score:.4f}")
         
         if TAG:
             title = "_".join([TAG, label])
