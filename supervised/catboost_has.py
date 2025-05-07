@@ -101,6 +101,22 @@ if __name__ == "__main__":
         predictions[pred_label] = model.predict_proba(d["test"])[:, 1]
         
         print("Logloss: {}".format(log_loss(y["test"], predictions[pred_label])), end="\n\n")
+
+        threshold_preds = (predictions[pred_label] > 0.5).astype(int)
+
+        auc_score = roc_auc_score(y["test"], predictions[pred_label])
+        accuracy = accuracy_score(y["test"], threshold_preds)
+        precision = precision_score(y["test"], threshold_preds)
+        recall = recall_score(y["test"], threshold_preds)
+        pr_auc = average_precision_score(y["test"], predictions[pred_label])
+        f2_score = fbeta_score(y["test"], threshold_preds, beta=2)
+        
+        print(f"AUC {label}: {auc_score:.4f}")
+        print(f"Accuracy {label}: {accuracy:.4f}")
+        print(f"Precision {label}: {precision:.4f}")
+        print(f"Recall {label}: {recall:.4f}")
+        print(f"PR_AUC {label}: {pr_auc:.4f}")
+        print(f"F2-Score {label}: {f2_score:.4f}")
         
         if TAG:
             title = "_".join([TAG, label])

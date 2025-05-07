@@ -1,0 +1,133 @@
+---
+title: "IBCF"
+author: "Luke Strassburg"
+date: "2025-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# IBCF
+```{r}
+library(tidyr)
+library(dplyr)
+library(recommenderlab)
+library(pROC)
+library(PRROC)
+library(Matrix)
+library(caret)
+
+set.seed(1)
+
+data <- read.csv(
+  "C:\\Users\\lwstr\\OneDrive\\Documents\\GitHub\\recsysReplication\\sample_data\\dataset.csv",
+  sep = ";",
+  dec = ".",
+  fileEncoding = "latin1",
+  na.strings = c("")
+)[, c("UNIQUE_ID", 'HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1', 'SET')]
+
+data.mod <- data[, c('HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1')]
+
+user <- rep(data$UNIQUE_ID, each = 10)
+
+df.mat <- data.frame(
+  user = user,
+  item = rep(1:ncol(data.mod), nrow(data.mod)),
+  rating = as.vector(t(as.matrix(data.mod)))
+)
+
+
+# We are just going to combine all the dfs and get a new split.
+# Having IBCF on users not in the model doesn't work
+
+n_rows <- nrow(df.mat)
+
+train_index <- sample(1:n_rows, size = 0.7 * n_rows)
+
+# Split the data into training and test sets
+train_data <- df.mat[train_index, ]
+test_data <- df.mat[-train_index, ]
+
+test_data_expanded <- test_data %>%
+  pivot_wider(names_from = item, values_from = rating, values_fill = NA)
+
+rows_actual <- test_data_expanded$user
+test_data_expanded <- test_data_expanded[, c('1', '2', '3', '4', '5', '6', '7', '8', '9', '10')]
+rownames(test_data_expanded) <- rows_actual
+
+train_rrm <- as(train_data, "realRatingMatrix")
+
+test_rrm <- as(test_data, "realRatingMatrix")
+
+# Now use with Recommender
+ibcf_model <- Recommender(
+  data = train_rrm,
+  method = "IBCF",
+  parameter = list(
+    method = "Jaccard",
+    k = 2
+  )
+)
+
+pred <- predict(ibcf_model, newdata = train_rrm, type = "ratings")
+pred <- as(pred, "matrix")
+
+auc_results <- numeric(ncol(pred))
+pr_auc_results <- numeric(ncol(pred))
+accuracy_results <- numeric(ncol(pred))
+precision_results <- numeric(ncol(pred))
+recall_results <- numeric(ncol(pred))
+f2_score_results <- numeric(ncol(pred))
+
+for (i in seq_along(auc_results)) {
+  col_name <- colnames(pred)[i]
+  
+  # Ensure both matrices have the column
+  if (!(col_name %in% colnames(test_data_expanded))) next
+  
+  # Extract and align by common rownames
+  common_rows <- intersect(rownames(pred), rownames(test_data_expanded))
+  p_col <- as.vector(pred[common_rows, col_name])
+  t_col <- as.vector(as.matrix(test_data_expanded[common_rows, col_name]))
+  
+  valid_idx <- which(!is.na(p_col) & !is.na(t_col))
+  t_col <- t_col[valid_idx]
+  p_col <- p_col[valid_idx]
+                     
+  auc <- roc(t_col, p_col)$auc
+  auc_results[i] <- auc
+  
+  prroc_obj <- pr.curve(scores.class0 = p_col, weights.class0 = t_col, curve = TRUE)
+  pr_auc <- prroc_obj$auc.integral
+  pr_auc_results[i] <- pr_auc
+  
+  pred_test_bin <- ifelse(p_col > 0.5, 1, 0)
+  
+  accuracy <- sum(pred_test_bin == t_col) / length(t_col)
+  accuracy_results[i] <- accuracy
+  
+  pred_test_bin_factor <- factor(pred_test_bin, levels = c(0, 1))
+  actual_test_factor <- factor(t_col, levels = c(0, 1))
+  
+  precision <- posPredValue(pred_test_bin_factor, actual_test_factor, positive = "1")
+  precision_results[i] <- precision
+  recall <- sensitivity(pred_test_bin_factor, actual_test_factor, positive = "1")
+  recall_results[i] <- recall
+  f2_score <- (5 * precision * recall) / (4 * precision + recall)
+  f2_score_results[i] <- f2_score
+
+}
+
+auc_results
+pr_auc_results
+accuracy_results
+precision_results
+recall_results
+f2_score_results
+
+
+
+```

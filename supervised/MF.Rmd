@@ -1,0 +1,488 @@
+---
+title: "Matrix Factorization Methods"
+author: "Luke Strassburg"
+date: "2025-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## LIBFM
+
+1. matrix k dimension: 2 and 3
+2. loss: (log)loss
+3. learning rate: 0.05 and 1
+4. costp_l1, costq_l1: 0.05 and 0
+5. costp_l2, costq_l2: 0.001 and 0 
+
+```{r}
+library(recosystem)
+library(Matrix)
+library(caret)
+library(pROC)
+library(PRROC)
+
+data <- read.csv(
+  "C:\\Users\\lwstr\\OneDrive\\Documents\\GitHub\\recsysReplication\\sample_data\\dataset.csv",
+  sep = ";",
+  dec = ".",
+  fileEncoding = "latin1",
+  na.strings = c("")
+)[, c("UNIQUE_ID", 'HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1', 'SET')]
+
+labels <- c('HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1')
+
+# train, validation, and test sets
+train_idx <- which(data$SET == "train")
+training_data <- data[train_idx, labels]
+
+valid_idx <- which(data$SET == "valid")
+validation_data <- data[valid_idx, labels]
+
+test_idx <- which(data$SET == "test")
+test_data <- data[test_idx, labels]
+
+train_matrix <- data.frame(
+  user = rep(1:nrow(training_data), each = ncol(training_data)),
+  item = rep(1:ncol(training_data), nrow(training_data)),
+  rating = as.vector(t(as.matrix(training_data)))
+)
+
+validation_matrix <- data.frame(
+  user = rep(1:nrow(validation_data), each = ncol(validation_data)),
+  item = rep(1:ncol(validation_data), nrow(validation_data)),
+  rating = as.vector(t(as.matrix(validation_data)))
+)
+
+test_matrix <- data.frame(
+  user = rep(1:nrow(test_data), each = ncol(test_data)),
+  item = rep(1:ncol(test_data), nrow(test_data)),
+  rating = as.vector(t(as.matrix(test_data)))
+)
+
+write.table(train_matrix, "train.txt", row.names = FALSE, col.names = FALSE, sep = "\t")
+write.table(validation_matrix, "validation.txt", row.names = FALSE, col.names = FALSE, sep = "\t")
+write.table(test_matrix, "test.txt", row.names = FALSE, col.names = FALSE, sep = "\t")
+
+train_file = data_file("train.txt")
+validation_file = data_file("validation.txt")
+test_file = data_file("test.txt")
+
+r = Reco()
+
+set.seed(123)
+
+grid_search <- expand.grid(
+  k = c(2, 3), 
+  loss = c("log"), 
+  learning_rate = c(0.05, 1),
+  costp_l1 = c(0.05, 0),
+  costq_l1 = c(0.05, 0),
+  costp_l2 = c(0.001, 0),
+  costq_l2 = c(0.001, 0)
+)
+
+# grid search
+results <- data.frame(
+  k = numeric(),
+  loss = character(),
+  learning_rate = numeric(),
+  costp_l1 = numeric(),
+  costq_l1 = numeric(),
+  costp_l2 = numeric(),
+  costq_l2 = numeric(),
+  auc = numeric()
+)
+for (i in 1:nrow(grid_search)) {
+  params <- grid_search[i, ]
+  opts <- list(
+    dim = params$k,
+    loss = params$loss,
+    lr = params$learning_rate,
+    costp_l1 = params$costp_l1,
+    costq_l1 = params$costq_l1,
+    costp_l2 = params$costp_l2,
+    costq_l2 = params$costq_l2
+  )
+  
+  # Tune the model on training data
+  r$train(train_file, out_model = NULL, opts = opts)
+
+  # predictions on the validation data
+  pred_valid <- r$predict(validation_file, out_memory())
+
+  # AUC on validation data
+  auc_val <- roc(as.vector(validation_matrix$rating), as.vector(pred_valid))$auc
+  results <- rbind(results, data.frame(
+      k = params$k,
+      loss = as.character(params$loss),
+      learning_rate = params$learning_rate,
+      costp_l1 = params$costp_l1,
+      costq_l1 = params$costq_l1,
+      costp_l2 = params$costp_l2,
+      costq_l2 = params$costq_l2,
+      auc = auc_val
+    ))
+}
+
+best_params <- results[which.max(results$auc), ]
+
+best_params <- list(
+  dim = best_params$k,
+  loss = as.character(best_params$loss),
+  lr = best_params$learning_rate,
+  costp_l1 = best_params$costp_l1,
+  costq_l1 = best_params$costq_l1,
+  costp_l2 = best_params$costp_l2,
+  costq_l2 = best_params$costq_l2
+)
+
+r$train(train_file, out_model = NULL, opts = opts)
+
+# Make predictions on the validation data
+pred_test <- r$predict(test_file, out_memory())
+
+test_data <- as.vector(t(test_data))
+
+auc_results <- numeric(ncol(training_data))
+pr_auc_results <- numeric(ncol(training_data))
+accuracy_results <- numeric(ncol(training_data))
+precision_results <- numeric(ncol(training_data))
+recall_results <- numeric(ncol(training_data))
+f2_score_results <- numeric(ncol(training_data))
+
+for (i in seq_along(auc_results)) {
+  if (i == 10) {
+    curr_indices <- which((1:length(pred_test)) %% 10 == 0)
+  } else {
+    curr_indices <- which((1:length(pred_test)) %% 10 == i)
+  }
+
+  tmp_pred_test <- pred_test[curr_indices]
+  tmp_test_data <- test_data[curr_indices]
+  
+  pred_test_bin <- ifelse(tmp_pred_test > 0.5, 1, 0)
+  
+  pred_test_bin_factor <- factor(pred_test_bin, levels = c(0, 1))
+  actual_test_factor <- factor(tmp_test_data, levels = c(0, 1))
+
+  accuracy <- sum(pred_test_bin_factor == actual_test_factor) / length(actual_test_factor)
+  accuracy_results[i] <- accuracy
+  
+  precision <- posPredValue(pred_test_bin_factor, actual_test_factor, positive = "1")
+  precision_results[i] <- precision
+  recall <- sensitivity(pred_test_bin_factor, actual_test_factor, positive = "1")
+  recall_results[i] <- recall
+  f2_score <- (5 * precision * recall) / (4 * precision + recall)
+  f2_score_results[i] <- f2_score
+  
+  auc <- roc(tmp_test_data, tmp_pred_test)$auc
+  auc_results[i] <- auc
+  
+  prroc_obj <- pr.curve(scores.class0 = tmp_pred_test, weights.class0 = tmp_test_data, curve = TRUE)
+  pr_auc <- prroc_obj$auc.integral
+  pr_auc_results[i] = pr_auc
+  
+  cat("AUC:", auc, "\n")
+  cat("Accuracy:", accuracy, "\n")
+  cat("Precision:", precision, "\n")
+  cat("Recall:", recall, "\n")
+  cat("PR AUC:", pr_auc, "\n")
+  cat("F2 Score:", f2_score, "\n")
+}
+
+accuracy_results
+auc_results
+pr_auc_results
+precision_results
+recall_results
+f2_score_results
+
+```
+
+# GLRM
+
+```{r}
+library(h2o)
+library(Matrix)
+library(caret)
+library(pROC)
+library(PRROC)
+h2o.init()
+
+data <- read.csv(
+  "C:\\Users\\lwstr\\OneDrive\\Documents\\GitHub\\recsysReplication\\sample_data\\dataset.csv",
+  sep = ";",
+  dec = ".",
+  fileEncoding = "latin1",
+  na.strings = c("")
+)[, c("UNIQUE_ID", 'HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1', 'SET')]
+
+labels <- c('HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1')
+
+# train, validation, and test sets
+train_idx <- which(data$SET == "train")
+training_data <- data[train_idx, labels]
+
+valid_idx <- which(data$SET == "valid")
+validation_data <- data[valid_idx, labels]
+
+test_idx <- which(data$SET == "test")
+test_data <- data[test_idx, labels]
+
+train_matrix <- data.frame(
+  user = rep(1:nrow(training_data), each = ncol(training_data)),
+  item = rep(1:ncol(training_data), nrow(training_data)),
+  rating = as.vector(t(as.matrix(training_data)))
+)
+
+validation_matrix <- data.frame(
+  user = rep(1:nrow(validation_data), each = ncol(validation_data)),
+  item = rep(1:ncol(validation_data), nrow(validation_data)),
+  rating = as.vector(t(as.matrix(validation_data)))
+)
+
+test_matrix <- data.frame(
+  user = rep(1:nrow(test_data), each = ncol(test_data)),
+  item = rep(1:ncol(test_data), nrow(test_data)),
+  rating = as.vector(t(as.matrix(test_data)))
+)
+
+train_h2o <- as.h2o(train_matrix)
+valid_h2o <- as.h2o(validation_matrix)
+test_h2o  <- as.h2o(test_matrix)
+
+hyper_grid <- expand.grid(
+  k = c(2),
+  gamma_x = c(0.001, 0.01, 0.1),
+  gamma_y = c(0.001, 0.01, 0.1)
+)
+
+results <- data.frame(
+  k = numeric(),
+  gamma_x = numeric(),
+  gamma_y = numeric()
+)
+
+for (i in 1:nrow(hyper_grid)) {
+  params <- hyper_grid[i, ]
+
+  glrm_model <- h2o.glrm(
+    training_frame = train_h2o,
+    k = params$k,
+    loss = "Quadratic",
+    gamma_x = params$gamma_x,
+    gamma_y = params$gamma_y,
+    init = "SVD",
+    max_iterations = 700
+  )
+  
+  pred_valid <- h2o.predict(glrm_model, newdata = valid_h2o)
+  
+  pv <- as.data.frame(pred_valid)
+  valid_preds <- pv$reconstr_rating
+  
+  # AUC on validation data
+  auc_val <- roc(as.vector(validation_matrix$rating), as.vector(valid_preds))$auc
+  results <- rbind(results, data.frame(
+      k = params$k,
+      gamma_x = params$gamma_x,
+      gamma_y = params$gamma_y,
+      auc = auc_val
+    ))
+}
+
+best_params <- results[which.max(results$auc), ]
+
+best_params <- list(
+  k = best_params$k,
+  gamma_x = best_params$gamma_x,
+  gamma_y = best_params$gamma_y
+)
+
+glrm_model <- h2o.glrm(
+  training_frame = train_h2o,
+  k = best_params$k,
+  loss = "Quadratic",
+  gamma_x = best_params$gamma_x,
+  gamma_y = best_params$gamma_y,
+  init = "SVD",
+  max_iterations = 700
+)
+
+pred_test <- h2o.predict(glrm_model, newdata = test_h2o)
+
+pv <- as.data.frame(pred_test)
+test_preds <- pv$reconstr_rating
+pred_test <- pmin(pmax(test_preds, 0), 1)
+test_data <- as.vector(t(test_data))
+
+auc_results <- numeric(ncol(training_data))
+pr_auc_results <- numeric(ncol(training_data))
+accuracy_results <- numeric(ncol(training_data))
+precision_results <- numeric(ncol(training_data))
+recall_results <- numeric(ncol(training_data))
+f2_score_results <- numeric(ncol(training_data))
+
+for (i in seq_along(auc_results)) {
+  if (i == 10) {
+    curr_indices <- which((1:length(pred_test)) %% 10 == 0)
+  } else {
+    curr_indices <- which((1:length(pred_test)) %% 10 == i)
+  }
+
+  tmp_pred_test <- pred_test[curr_indices]
+  tmp_test_data <- test_data[curr_indices]
+  
+  pred_test_bin <- ifelse(tmp_pred_test > 0.5, 1, 0)
+  
+  pred_test_bin_factor <- factor(pred_test_bin, levels = c(0, 1))
+  actual_test_factor <- factor(tmp_test_data, levels = c(0, 1))
+
+  accuracy <- sum(pred_test_bin_factor == actual_test_factor) / length(actual_test_factor)
+  accuracy_results[i] <- accuracy
+  
+  precision <- posPredValue(pred_test_bin_factor, actual_test_factor, positive = "1")
+  precision_results[i] <- precision
+  recall <- sensitivity(pred_test_bin_factor, actual_test_factor, positive = "1")
+  recall_results[i] <- recall
+  f2_score <- (5 * precision * recall) / (4 * precision + recall)
+  f2_score_results[i] <- f2_score
+  
+  auc <- roc(tmp_test_data, tmp_pred_test)$auc
+  auc_results[i] <- auc
+  
+  prroc_obj <- pr.curve(scores.class0 = tmp_pred_test, weights.class0 = tmp_test_data, curve = TRUE)
+  pr_auc <- prroc_obj$auc.integral
+  pr_auc_results[i] = pr_auc
+  
+  cat("AUC:", auc, "\n")
+  cat("Accuracy:", accuracy, "\n")
+  cat("Precision:", precision, "\n")
+  cat("Recall:", recall, "\n")
+  cat("PR AUC:", pr_auc, "\n")
+  cat("F2 Score:", f2_score, "\n")
+}
+
+accuracy_results
+auc_results
+pr_auc_results
+precision_results
+recall_results
+f2_score_results
+
+```
+# SLIM
+
+```{r}
+
+library(slimrec)
+library(Matrix)
+library(pROC)
+library(PRROC)
+library(caret)
+
+data <- read.csv(
+  "C:\\Users\\lwstr\\OneDrive\\Documents\\GitHub\\recsysReplication\\sample_data\\dataset.csv",
+  sep = ";",
+  dec = ".",
+  fileEncoding = "latin1",
+  na.strings = c("")
+)[, c("UNIQUE_ID", 'HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1', 'SET')]
+
+labels <- c('HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1')
+
+train_idx <- which(data$SET == "train")
+training_data <- data[train_idx, labels]
+valid_idx <- which(data$SET == "valid")
+validation_data <- data[valid_idx, labels]
+test_idx <- which(data$SET == "test")
+test_data <- data[test_idx, labels]
+
+# Input matrices: dgCMatrix class
+A_train <- as(as.matrix(training_data), "dgCMatrix")
+A_valid <- as(as.matrix(validation_data), "dgCMatrix")
+A_test <- as(as.matrix(test_data), "dgCMatrix")
+
+alphas <- c(0.0001, 0.001, 0.01, 0.1)
+results <- data.frame(alpha = alphas, auc = NA)
+
+for (i in seq_along(alphas)) {
+  model <- slim(A_train, alpha = alphas[i], coeffMat = TRUE, returnMat = TRUE)
+  
+  W <- model$coeffMat
+  pred_valid <- A_valid %*% W
+  
+  auc_val <- roc(as.vector(A_valid), as.vector(pred_valid))$auc
+  
+  results$auc[i] <- auc_val
+}
+
+best_alpha <- results$alpha[which.max(results$auc)]
+
+# Use on test dataset
+
+model <- slim(A_train, alpha = best_alpha, coeffMat = TRUE, returnMat = TRUE)
+W <- model$coeffMat
+pred_test <- A_test %*% W
+
+pred_test <- as.vector(t(as.matrix(pred_test)))
+test_data <- as.vector(t(as.matrix(test_data)))
+
+auc_results <- numeric(ncol(training_data))
+pr_auc_results <- numeric(ncol(training_data))
+accuracy_results <- numeric(ncol(training_data))
+precision_results <- numeric(ncol(training_data))
+recall_results <- numeric(ncol(training_data))
+f2_score_results <- numeric(ncol(training_data))
+
+for (i in seq_along(auc_results)) {
+  if (i == 10) {
+    curr_indices <- which((1:length(pred_test)) %% 10 == 0)
+  } else {
+    curr_indices <- which((1:length(pred_test)) %% 10 == i)
+  }
+
+  tmp_pred_test <- pred_test[curr_indices]
+  tmp_test_data <- test_data[curr_indices]
+  
+  pred_test_bin <- ifelse(tmp_pred_test > 0.5, 1, 0)
+  
+  pred_test_bin_factor <- factor(pred_test_bin, levels = c(0, 1))
+  actual_test_factor <- factor(tmp_test_data, levels = c(0, 1))
+
+  accuracy <- sum(pred_test_bin_factor == actual_test_factor) / length(actual_test_factor)
+  accuracy_results[i] <- accuracy
+  
+  precision <- posPredValue(pred_test_bin_factor, actual_test_factor, positive = "1")
+  precision_results[i] <- precision
+  recall <- sensitivity(pred_test_bin_factor, actual_test_factor, positive = "1")
+  recall_results[i] <- recall
+  f2_score <- (5 * precision * recall) / (4 * precision + recall)
+  f2_score_results[i] <- f2_score
+  
+  auc <- roc(tmp_test_data, tmp_pred_test)$auc
+  auc_results[i] <- auc
+  
+  prroc_obj <- pr.curve(scores.class0 = tmp_pred_test, weights.class0 = tmp_test_data, curve = TRUE)
+  pr_auc <- prroc_obj$auc.integral
+  pr_auc_results[i] = pr_auc
+  
+  cat("AUC:", auc, "\n")
+  cat("Accuracy:", accuracy, "\n")
+  cat("Precision:", precision, "\n")
+  cat("Recall:", recall, "\n")
+  cat("PR AUC:", pr_auc, "\n")
+  cat("F2 Score:", f2_score, "\n")
+}
+
+accuracy_results
+auc_results
+pr_auc_results
+precision_results
+recall_results
+f2_score_results
+
+```

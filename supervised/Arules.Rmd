@@ -1,0 +1,69 @@
+---
+title: "Arules_Associations"
+author: "Luke Strassburg"
+date: "2025-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ARules Associations Via Apriori
+
+Looking for:
+
+- Min Rule Length 2
+- Min Support 1%
+- Min Confidence 20%
+- Collecting Lift, Count, Confidence, Support
+
+```{r}
+library(arules)
+
+# Load in ownership data for stage 1
+data <- read.csv(
+  "C:\\Users\\lwstr\\OneDrive\\Documents\\GitHub\\recsysReplication\\sample_data\\dataset.csv",
+  sep = ";",
+  dec = ".",
+  fileEncoding = "latin1",
+  na.strings = c("")
+)[, c('HAS_A_1', 'HAS_B_1', 'HAS_C_1', 'HAS_D_1', 'HAS_E_1', 'HAS_F_1', 'HAS_G_1', 'HAS_H_1', 'HAS_I_1', 'HAS_L_1')]
+
+data[data == 0] <- NA
+data <- !is.na(data)
+
+trans <- transactions(data)
+
+rules <- apriori(trans, parameter = list(supp = 0.01, conf = 0.20, minlen = 3, target = "rules"))
+
+top_rules <- sort(rules, by = "lift")
+
+inspect(top_rules)
+
+```
+
+```{r}
+library(arules)
+
+# Load in ownership data for stage 2
+data <- read.csv(
+  "C:\\Users\\lwstr\\OneDrive\\Documents\\GitHub\\recsysReplication\\sample_data\\dataset.csv",
+  sep = ";",
+  dec = ".",
+  fileEncoding = "latin1",
+  na.strings = c("")
+)[, c('HAS_A_2', 'HAS_B_2', 'HAS_C_2', 'HAS_D_2', 'HAS_E_2', 'HAS_F_2', 'HAS_G_2', 'HAS_H_2', 'HAS_I_2', 'HAS_L_2')]
+
+data[data == 0] <- NA
+data <- !is.na(data)
+
+trans <- transactions(data)
+
+rules <- apriori(trans, parameter = list(supp = 0.01, conf = 0.20, minlen = 3, target = "rules"))
+
+top_rules <- sort(rules, by = "lift")
+
+inspect(top_rules)
+
+```
